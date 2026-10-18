@@ -1,0 +1,17 @@
+.DS_Store
+/build/
+/.build/
+/dist/
+*.app/
+*.dSYM/
+*.log
+*.sqlite*
+*.bookmark
+*.gaoaction/
+/Private/
+/Backups/
+/Incoming/
+/Outgoing/
+
+__pycache__/
+*.pyc

@@ -1,0 +1,82 @@
+FINAL TARGETED VALIDATION; no app launch / no real association mutations
+
+sandbox_extension_issue_file failed for /tmp/GaoZhengLi-IndexTests-D76B5D5F-F33B-49C3-AA02-327F76DB1921/files: 1 (Operation not permitted)
+sandbox_extension_issue_file failed for /tmp/GaoZhengLi-IndexTests-D76B5D5F-F33B-49C3-AA02-327F76DB1921/files: 1 (Operation not permitted)
+sandbox_extension_issue_file failed for /tmp/GaoZhengLi-IndexTests-D76B5D5F-F33B-49C3-AA02-327F76DB1921/files: 1 (Operation not permitted)
+sandbox_extension_issue_file failed for /tmp/GaoZhengLi-IndexTests-D76B5D5F-F33B-49C3-AA02-327F76DB1921/files: 1 (Operation not permitted)
+sandbox_extension_issue_file failed for /tmp/GaoZhengLi-IndexTests-D76B5D5F-F33B-49C3-AA02-327F76DB1921/other/files: 1 (Operation not permitted)
+sandbox_extension_issue_file failed for /tmp/GaoZhengLi-IndexTests-D76B5D5F-F33B-49C3-AA02-327F76DB1921/other/files: 1 (Operation not permitted)
+sandbox_extension_issue_file failed for /tmp/GaoZhengLi-IndexTests-D76B5D5F-F33B-49C3-AA02-327F76DB1921/perf: 1 (Operation not permitted)
+sandbox_extension_issue_file failed for /tmp/GaoZhengLi-IndexTests-D76B5D5F-F33B-49C3-AA02-327F76DB1921/perf: 1 (Operation not permitted)
+INDEX sqlite=3.54.0 FTS5=true; functional assertions passed
+INDEX PERF synthetic local temp/APFS files=2000 first=0.250s warm=0.689s query=0.004662s results=11
+INDEX TEST PROCESS cpu=1.106s peakRSS=27.92MiB (includes fixtures/all assertions, not scan-only)
+PASS IndexTests: Unicode, literal SQL/FTS input, filters/pages, inode rename+hardlinks, symlink/package/hidden boundaries, interruption/resume, path swap, annotations, pause, online backup, migration, future schema/missing/corrupt initialization
+
+PASS same-volume content/xattr/mode, idempotent execute, safe rollback
+PASS existing destination is never overwritten
+PASS edit during confirmation invalidates source digest
+PASS same-name source replacement is rejected
+PASS destination created after confirmation is retained
+PASS interruption beforeJournal: durable stop, no replay, recover original
+PASS interruption afterJournal: durable stop, no replay, recover original
+PASS interruption beforeRename: durable stop, no replay, recover original
+PASS interruption afterRename: durable stop, no replay, recover original
+PASS interruption beforeCommit: durable stop, no replay, recover original
+PASS interruption afterCommit: durable stop, no replay, recover original
+PASS journal disk-full injection leaves original intact
+PASS source changes immediately before rename: no mutation
+PASS cancel before first mutation
+PASS batch cancellation retains completed item for explicit rollback
+PASS rollback refuses edited target
+PASS rollback refuses replacement target
+PASS rollback source conflict never overwrites new source
+PASS interrupted rollback beforeRollback recovers idempotently
+PASS interrupted rollback afterRollback recovers idempotently
+PASS authorization boundary and changed root fail closed
+PASS unsupported directories, symlinks, hardlinks never mutate
+PASS ledger integrity missingLedger fails closed
+PASS ledger integrity missingMarker fails closed
+PASS ledger integrity missingAnchor fails closed
+PASS ledger integrity missingDirectory fails closed
+PASS ledger integrity badDigest fails closed
+PASS ledger integrity futureVersion fails closed
+PASS duplicate engine cannot concurrently access ledger
+MOVE TESTS PASSED: 29; synthetic files only; no app launch.
+PASS Exchange: 60 assertions; isolated original temporary files; no GUI/app launched
+
+PASS refresh uses fake current/candidates without global mutation
+PASS pending record precedes mutation; success requires persisted readback
+PASS system rejection fails and retains old actual association
+PASS silent system no-op cannot be promoted to completed
+PASS readback failure cannot be promoted to completed
+PASS pending ledger recovery records interrupted and never reexecutes
+PASS restore missing old application does not call setter
+PASS restore available old application preserves original mode/scope and verifies readback
+PASS ledger write rejection prevents the system request
+PASS configuration startup missing preserves evidence and fails closed
+PASS configuration startup markerMissing preserves evidence and fails closed
+PASS configuration startup badJSON preserves evidence and fails closed
+PASS configuration startup badDigest preserves evidence and fails closed
+PASS configuration startup futureEnvelope preserves evidence and fails closed
+PASS configuration genuine first initialization roundtrips user values
+PASS configuration runtime deleted rejects save and preserves existing evidence
+PASS configuration runtime corrupt rejects save and preserves existing evidence
+PASS configuration runtime futureEnvelope rejects save and preserves existing evidence
+PASS configuration runtime validExternalEdit rejects save and preserves existing evidence
+PASS association ledger startup missing never calls system setter
+PASS association ledger startup corrupt never calls system setter
+PASS association ledger startup future never calls system setter
+PASS corrupt configuration initialization marker rejects load and runtime save
+ASSOCIATION/CONFIG TESTS PASSED: 23; fake adapter only; no real default changed; no app launch.
+
+PASS backup copies .lock attachment, only excludes exact three runtime locks, hashes full inventory
+PASS existing backup not overwritten
+PASS missing required data cannot be verified as empty
+PASS linked attachments stop backup without false verification
+BACKUP TESTS PASSED: 4; synthetic files only; no app launch
+
+FINAL INSTALL (2026-10-18, no app launch)
+INSTALL VERIFIED: V1.00/build1; source/installed file inventory identical; signature valid; private data not initialized; app never launched; precise installed registration completed.
+NSWorkspace bundle lookup: /Applications/搞整理.app
+TeamIdentifier=5G96498KGJ; arm64; minimum macOS 14.0; not notarized.
