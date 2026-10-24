@@ -428,6 +428,11 @@ def install(source):
         except BaseException as error:
             rollback_errors = []
             program_restored = False
+            def persist_rollback():
+                try:
+                    persist()
+                except BaseException as receipt_error:
+                    rollback_errors.append('Rollback receipt write failed: ' + str(receipt_error))
             # A registration failure must never prevent the filesystem rollback.
             if swapped:
                 try:
@@ -440,16 +445,16 @@ def install(source):
                 if present(old):
                     if retained:
                         retained['moves'].append({'from': str(old), 'to': str(TARGET), 'state': 'planned'})
-                        persist()
+                        persist_rollback()
                     old.rename(TARGET)
                 if original_info:
                     verify_original(TARGET, original_info, original_manifest, original_identity)
+                    program_restored = True
                     if retained:
                         retained.update(authoritativePath=str(TARGET), fullInventoryVerified=True, sameObjectVerified=True)
                         if retained['moves']:
                             retained['moves'][-1]['state'] = 'verified'
-                        persist()
-                    program_restored = True
+                        persist_rollback()
                 else:
                     program_restored = not present(TARGET)
             except BaseException as rollback_error:
@@ -472,7 +477,7 @@ def install(source):
                     rollback_errors.append(str(cleanup_error))
             record.update(status='failed', installedVerified=False, error=str(error), rollbackErrors=rollback_errors,
                           rollbackProgramVerified=program_restored)
-            persist()
+            persist_rollback()
             if rollback_errors:
                 raise RuntimeError('Install failed; rollback requires attention; receipt: ' + str(receipt)) from error
             raise

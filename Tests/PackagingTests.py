@@ -330,6 +330,44 @@ class PackagingTests(unittest.TestCase):
         self.assertNotIn('retainedOriginalProgram', record)
         self.assertFalse(any(args[0] == installer.LS for args in self.commands))
 
+    def test_persistent_receipt_failure_after_original_move_restores_original(self):
+        import copy
+        import errno
+        identity = installer.object_identity(self.target)
+        before = installer.state_snapshot()
+        real_write = installer.write_record
+        failed_writes = []
+        fault = False
+        def receipt_unavailable(path, record):
+            nonlocal fault
+            if not self.target.exists() and list(self.backups.glob('Install-*/Program.noindex/搞整理.app')):
+                fault = True
+            if fault:
+                failed_writes.append(copy.deepcopy(record))
+                raise OSError(errno.ENOSPC, 'fixture persistent receipt volume full')
+            return real_write(path, record)
+        with mock.patch.object(installer, 'inventory', self.macl_fixture_inventory()):
+            expected = installer.inventory(self.target)
+            with mock.patch.object(installer, 'write_record', receipt_unavailable):
+                with self.assertRaisesRegex(RuntimeError, 'rollback requires attention'):
+                    installer.install(self.source)
+            self.assertEqual(installer.inventory(self.target), expected)
+            self.assertEqual(installer.object_identity(self.target), identity)
+        self.assertTrue(fault)
+        self.assertGreaterEqual(len(failed_writes), 4)
+        final_attempt = failed_writes[-1]
+        self.assertEqual(final_attempt['status'], 'failed')
+        self.assertTrue(final_attempt['rollbackProgramVerified'])
+        self.assertFalse(final_attempt['installedVerified'])
+        self.assertEqual(final_attempt['retainedOriginalProgram']['authoritativePath'], str(self.target))
+        self.assertEqual(final_attempt['retainedOriginalProgram']['moves'][-1]['state'], 'verified')
+        _, durable = self.receipt()
+        self.assertEqual(durable['retainedOriginalProgram']['authoritativePath'], str(self.target))
+        self.assertEqual(durable['retainedOriginalProgram']['moves'][-1]['state'], 'planned')
+        self.assertEqual(installer.state_snapshot(), before)
+        self.assert_old_target()
+        self.assertIn((installer.LS, '-f', str(self.target)), self.commands)
+
     def test_root_macl_fallback_refuses_cross_device_original_move(self):
         identity_function = installer.object_identity
         def different_device(path):
