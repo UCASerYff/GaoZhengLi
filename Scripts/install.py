@@ -144,16 +144,46 @@ def safe_zip(archive, root_name):
             raise RuntimeError('Archive is incomplete or damaged')
 
 
+class ArchiveRootMaclMismatch(RuntimeError):
+    """A ZIP restored everything except the original root's system-managed macl."""
+    def __init__(self, proof):
+        super().__init__('Archive cannot preserve the original app root com.apple.macl')
+        self.proof = proof
+
+
+def root_macl_missing_only(expected, restored):
+    if expected.keys() != restored.keys() or expected.get('.') is None:
+        return False
+    expected_root, restored_root = expected['.'], restored['.']
+    if expected_root.keys() != restored_root.keys():
+        return False
+    source_attrs, restored_attrs = expected_root['xattrs'], restored_root['xattrs']
+    if source_attrs.keys() - restored_attrs.keys() != {'com.apple.macl'} or restored_attrs.keys() - source_attrs.keys():
+        return False
+    return (all(expected[name] == restored[name] for name in expected if name != '.')
+            and all(expected_root[name] == restored_root[name] for name in expected_root if name != 'xattrs')
+            and all(source_attrs[name] == value for name, value in restored_attrs.items()))
+
+
 def verify_archive(archive, root_name, expected, expected_info):
     safe_zip(archive, root_name)
+    proof = {'path': str(archive), 'size': archive.stat().st_size, 'sha256': sha256(archive),
+             'root': root_name, 'inventoryVerified': True, 'signatureVerified': True,
+             'infoPlistVerified': True, 'verificationScope': 'all-files-directories-modes-xattrs-and-links'}
     with tempfile.TemporaryDirectory(prefix='gaozhengli-restore-', suffix='.noindex', dir='/private/tmp') as folder:
         run('/usr/bin/ditto', '-x', '-k', str(archive), folder)
         restored = P(folder) / root_name
-        if inventory(restored) != expected or verify_app(restored) != expected_info:
+        restored_inventory = inventory(restored)
+        if verify_app(restored) != expected_info:
             raise RuntimeError('Archive restore verification failed')
-    return {'path': str(archive), 'size': archive.stat().st_size, 'sha256': sha256(archive),
-            'root': root_name, 'inventoryVerified': True, 'signatureVerified': True,
-            'infoPlistVerified': True, 'verificationScope': 'all-files-directories-modes-xattrs-and-links'}
+        if restored_inventory != expected:
+            if root_macl_missing_only(expected, restored_inventory):
+                proof.update(inventoryVerified=False, supplementalOnly=True,
+                             verificationScope='all-inventory-entries-except-missing-root-com.apple.macl',
+                             missingMetadata={'.': {'com.apple.macl': expected['.']['xattrs']['com.apple.macl']}})
+                raise ArchiveRootMaclMismatch(proof)
+            raise RuntimeError('Archive restore verification failed')
+    return proof
 
 
 def private_staging_source(source):
@@ -266,11 +296,33 @@ def unregister(path):
     return 'unregistered' if result.returncode == 0 else 'notRegistered'
 
 
+def object_identity(path):
+    value = path.lstat()
+    return {'device': value.st_dev, 'inode': value.st_ino}
+
+
+def verify_original(path, info, manifest, identity):
+    if object_identity(path) != identity or verify_app(path) != info or inventory(path) != manifest:
+        raise RuntimeError('Original program identity, signature or full metadata changed')
+
+
+def write_receipts(backup, record, original_info, original_manifest):
+    write_record(backup / 'install-record.json', record)
+    if 'app' in record['backups']:
+        write_record(backup / 'restore-verification.json', {
+            'schemaVersion': 2, 'originalApp': str(TARGET), 'originalInfoPlist': original_info,
+            'archive': record['archivedBackups']['app'], 'inventory': original_manifest,
+            'authoritativeOriginalProgram': record.get('retainedOriginalProgram'),
+            'installationStatus': record['status']})
+
+
 def install(source):
     info = verify_app(source)
     with data_lease():
         initialized = initialized_state()
         original_info = verify_app(TARGET) if present(TARGET) else None
+        original_manifest = inventory(TARGET) if original_info else None
+        original_identity = object_identity(TARGET) if original_info else None
         before = state_snapshot()
         if present(BACKUPS) and (BACKUPS.is_symlink() or not BACKUPS.is_dir() or BACKUPS.stat().st_uid != os.getuid()):
             raise RuntimeError('Backup directory identity is invalid')
@@ -284,32 +336,62 @@ def install(source):
                   'initialized': initialized, 'firstInstall': original_info is None and before['data'] is None and before['preferences'] is None and not initialized,
                   'gui_verified': False, 'verification_scope': 'static-and-targeted', 'status': 'backing-up',
                   'backups': {}, 'archivedBackups': {}}
-        write_record(receipt, record)
-        if original_info:
-            manifest = inventory(TARGET)
-            run('/usr/bin/ditto', '-c', '-k', '--sequesterRsrc', '--keepParent', str(TARGET), str(backup / 'Previous.app.zip'))
-            archive = verify_archive(backup / 'Previous.app.zip', TARGET.name, manifest, original_info)
-            if inventory(TARGET) != manifest:
-                raise RuntimeError('Installed app changed while backing up')
-            record['backups']['app'] = manifest
-            record['archivedBackups']['app'] = archive
-            write_record(backup / 'restore-verification.json', {'schemaVersion': 1, 'originalApp': str(TARGET),
-                         'originalInfoPlist': original_info, 'archive': archive, 'inventory': manifest})
-        if before['data'] is not None:
-            record['backups']['data'] = verified_copy(DATA, backup / 'Data')
-            if record['backups']['data'] != before['data']:
-                raise RuntimeError('Data changed before backup finished')
-        if before['preferences'] is not None:
-            run('/usr/bin/ditto', '--rsrc', '--extattr', str(PREFS), str(backup / 'Preferences.plist'))
-            if entry(PREFS) != before['preferences'] or entry(backup / 'Preferences.plist') != before['preferences']:
-                raise RuntimeError('Preferences backup mismatch')
-            record['backups']['preferences'] = before['preferences']
-        verify_state(before)
-        record['status'] = 'backup-verified'
-        write_record(receipt, record)
-        # Rename candidate and rollback app on the target filesystem, within a private non-indexed container.
+        def persist():
+            write_receipts(backup, record, original_info, original_manifest)
+        persist()
+        retained = None
+        try:
+            if original_info:
+                archive_path = backup / 'Previous.app.zip'
+                run('/usr/bin/ditto', '-c', '-k', '--sequesterRsrc', '--keepParent', str(TARGET), str(archive_path))
+                try:
+                    archive = verify_archive(archive_path, TARGET.name, original_manifest, original_info)
+                except ArchiveRootMaclMismatch as mismatch:
+                    # ZIP is supplementary only. Preserve the actual original object, including macl;
+                    # never recreate, remove or write the system-managed attribute.
+                    archive = mismatch.proof
+                    program_container = backup / 'Program.noindex'
+                    program_container.mkdir(mode=0o700)
+                    if program_container.stat().st_dev != original_identity['device']:
+                        raise RuntimeError('Original program retention requires the same filesystem')
+                    retained = {'path': str(program_container / TARGET.name), 'authoritativePath': str(TARGET),
+                                'originalSource': str(TARGET), 'identity': original_identity,
+                                'reason': 'ZIP restore lacks original root com.apple.macl; original bundle is authoritative',
+                                'fullInventoryVerified': False, 'sameObjectVerified': False, 'moves': []}
+                    record['retainedOriginalProgram'] = retained
+                verify_original(TARGET, original_info, original_manifest, original_identity)
+                record['backups']['app'] = original_manifest
+                record['archivedBackups']['app'] = archive
+                persist()
+            if before['data'] is not None:
+                record['backups']['data'] = verified_copy(DATA, backup / 'Data')
+                if record['backups']['data'] != before['data']:
+                    raise RuntimeError('Data changed before backup finished')
+            if before['preferences'] is not None:
+                run('/usr/bin/ditto', '--rsrc', '--extattr', str(PREFS), str(backup / 'Preferences.plist'))
+                if entry(PREFS) != before['preferences'] or entry(backup / 'Preferences.plist') != before['preferences']:
+                    raise RuntimeError('Preferences backup mismatch')
+                record['backups']['preferences'] = before['preferences']
+            verify_state(before)
+            record['status'] = 'backup-verified-pending-original-retention' if retained else 'backup-verified'
+            persist()
+        except BaseException as error:
+            unchanged = not present(TARGET) if original_info is None else False
+            if original_info:
+                try:
+                    verify_original(TARGET, original_info, original_manifest, original_identity)
+                    unchanged = True
+                except BaseException:
+                    pass
+            record.update(status='failed-before-replacement', installedVerified=False,
+                          error=str(error), oldProgramUnchanged=unchanged)
+            persist()
+            raise
+        # Candidate staging is on the target filesystem. The original, when needed for macl,
+        # moves atomically under its unchanged filename into the long-term private container.
         staging = P(tempfile.mkdtemp(prefix='.GaoZhengLi-install-', suffix='.noindex', dir=TARGET.parent))
-        stage, old = staging / TARGET.name, staging / 'Previous.app'
+        stage = staging / TARGET.name
+        old = P(retained['path']) if retained else staging / 'Previous.app'
         swapped = False
         try:
             manifest = verified_copy(source, stage)
@@ -318,9 +400,18 @@ def install(source):
             ensure_stopped()
             verify_state(before)
             if original_info:
-                if inventory(TARGET) != record['backups']['app']:
-                    raise RuntimeError('Installed app changed before replacement')
+                verify_original(TARGET, original_info, original_manifest, original_identity)
+                if retained:
+                    record['status'] = 'retaining-original-program'
+                    retained['moves'].append({'from': str(TARGET), 'to': str(old), 'state': 'planned'})
+                    persist()  # Durable recovery pointer before changing either program path.
                 TARGET.rename(old)
+                if retained:
+                    verify_original(old, original_info, original_manifest, original_identity)
+                    retained.update(authoritativePath=str(old), fullInventoryVerified=True, sameObjectVerified=True)
+                    retained['moves'][-1]['state'] = 'verified'
+                    record['status'] = 'backup-verified'
+                    persist()
             stage.rename(TARGET)
             swapped = True
             if verify_app(TARGET) != info or inventory(TARGET) != manifest:
@@ -329,9 +420,11 @@ def install(source):
             registration = {str(path): unregister(path) for path in (source, stage, old)}
             run(LS, '-f', str(TARGET))
             verify_state(before)
+            if retained:
+                verify_original(old, original_info, original_manifest, original_identity)
             record.update(status='installed-verified', installedVerified=True,
                           registration={'installedRegistered': True, 'exactPaths': registration})
-            write_record(receipt, record)
+            persist()
         except BaseException as error:
             rollback_errors = []
             program_restored = False
@@ -345,10 +438,17 @@ def install(source):
                 if swapped:
                     TARGET.rename(stage)
                 if present(old):
+                    if retained:
+                        retained['moves'].append({'from': str(old), 'to': str(TARGET), 'state': 'planned'})
+                        persist()
                     old.rename(TARGET)
                 if original_info:
-                    if verify_app(TARGET) != original_info or inventory(TARGET) != record['backups']['app']:
-                        raise RuntimeError('Restored app verification failed; compressed rollback archive retained')
+                    verify_original(TARGET, original_info, original_manifest, original_identity)
+                    if retained:
+                        retained.update(authoritativePath=str(TARGET), fullInventoryVerified=True, sameObjectVerified=True)
+                        if retained['moves']:
+                            retained['moves'][-1]['state'] = 'verified'
+                        persist()
                     program_restored = True
                 else:
                     program_restored = not present(TARGET)
@@ -372,17 +472,17 @@ def install(source):
                     rollback_errors.append(str(cleanup_error))
             record.update(status='failed', installedVerified=False, error=str(error), rollbackErrors=rollback_errors,
                           rollbackProgramVerified=program_restored)
-            write_record(receipt, record)
+            persist()
             if rollback_errors:
-                # Preserve all recovery evidence if the program rollback itself could not be verified.
                 raise RuntimeError('Install failed; rollback requires attention; receipt: ' + str(receipt)) from error
             raise
         shutil.rmtree(staging)
         record['temporaryAppsRemoved'] = True
-        write_record(receipt, record)
+        persist()
         return {'installed': str(TARGET), 'version': info['CFBundleShortVersionString'], 'build': info['CFBundleVersion'],
                 'backupRecord': str(receipt), 'restoreVerification': str(backup / 'restore-verification.json') if original_info else None,
-                'previousAppArchive': record['archivedBackups'].get('app'), 'gui_verified': False, 'firstInstall': record['firstInstall']}
+                'previousAppArchive': record['archivedBackups'].get('app'),
+                'retainedOriginalProgram': retained, 'gui_verified': False, 'firstInstall': record['firstInstall']}
 
 
 def main():
