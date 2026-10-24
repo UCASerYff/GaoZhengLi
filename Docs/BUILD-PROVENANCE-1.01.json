@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "app": "搞整理",
+  "bundleIdentifier": "com.gaoseries.GaoZhengLi",
+  "version": "1.01",
+  "build": "2",
+  "architecture": "arm64",
+  "minimumMacOS": "14.0",
+  "compiledPayloadCommit": "bd6372275fb553a7f082b4be7d219b06490b1321",
+  "finalInstallerFixCommit": "49b734177d229ceebe45dc1fd172442e169f21f0",
+  "compiledPayloadUnchangedAfterBuild": true,
+  "executableSHA256": "8605ecf1c99eb1b3c9d008a4de03dbec9585026186be3932fb3ce9b658d69794",
+  "capabilitiesSHA256": "a431d9efdca9f2716921bf5f1519eca883e427e2b0ef8dabc8fc9fb873aa73af",
+  "artifacts": {
+    "GaoZhengLi-1.01.dmg": {
+      "bytes": 1534605,
+      "sha256": "440ff814ffddcd5266887e72dbb2a0b29185837654dc2184f0b7573f38dfb58d"
+    },
+    "GaoZhengLi-1.01-macOS.zip": {
+      "bytes": 1096261,
+      "sha256": "85b5aea56c13595f69f8c3bd3e55bc9d5e33c53b5c5627cb24bf96185698c726"
+    }
+  },
+  "productionInputsSHA256": {
+    "Assets/AppIcon.icns": "61e59699f36686e5a581cb807bdae858300270aef0b1ebe09300670b20a442b5",
+    "Assets/AppIcon.png": "cb37c5efb1e0e7999f85d8f78525f7f0044a5ccc77a54e158f60ff00c0e32f47",
+    "BUILD": "53c234e5e8472b6ac51c1ae1cab3fe06fad053beb8ebfd8977b010655bfdd3c3",
+    "LICENSE": "96741197c8f6374f5354ce1eb446902c23373440b8b17354e7f32c12592efdb3",
+    "Resources/GaoCapabilities.json": "a431d9efdca9f2716921bf5f1519eca883e427e2b0ef8dabc8fc9fb873aa73af",
+    "Scripts/make_plist.py": "6683a064810945efd2da43be0dfc7e6a6a5043be14ae4d15346bc8f87fc09899",
+    "Sources/App.swift": "ba10cd3e4949039687d431c32872c427cb11a8befde58765af3744f00b09dba2",
+    "Sources/AppModel.swift": "b358346ae81b1703a3bf64272effea70e7f61a8e052621aa3e74c6430bd4dd44",
+    "Sources/Associations.swift": "1cda76402778f8fdb4e9669718cf2a5701598631c01291f24d10579847918213",
+    "Sources/Backup.swift": "1199fd388f369457cd55667f83ce90428cc591f41edb17b68d8693eeaf3bece9",
+    "Sources/BackupEngine.swift": "420e97b8f5b78c06bc7f5b2e5136cab10d8659be0c16a54c1827d8c8695b2826",
+    "Sources/Configuration.swift": "83acae8557f0900f008037f4d3a2d7e7516bb169cbb1b27102d40c5c60f3a5c4",
+    "Sources/ExchangeCapabilities.swift": "18aad29c5689173ccb3562c40cc9136a66cce86a4eefac18d4ffee3fb9e12305",
+    "Sources/ExchangeJournal.swift": "7346189885e059ad7275447d788edbf7751392c5f9a829958e0a09e47b02a03d",
+    "Sources/ExchangeProtocol.swift": "c6ecf3abc24a4485f2027071465f62cf1556915631235ba8ec7d07f04b703475",
+    "Sources/ExchangeService.swift": "87b563f7f5d2da5ecb230da8ecbea8713f273c7d939a914def03f06f8bffa75c",
+    "Sources/ExchangeStorage.swift": "a1056e6ed936b7577931432034cf5ea887e2b98b00dceff5eaee352a7d6c27c3",
+    "Sources/IndexModels.swift": "6ffb8b203f4c5b9d8771dda1edd7457a6ed6d9d5859a28d12b64248becfe0a94",
+    "Sources/IndexMonitor.swift": "9543a9f75949fd1c7998032ca989d6303f77f4cd93dc77036b91414f36237067",
+    "Sources/IndexStore.swift": "31cd237a9ff35d5ca3fac3dadae678f69f57261bad1334008be8258d82deebe1",
+    "Sources/MainView.swift": "c79a7df9632372ae4e1880fd7f61734e0cbd55ac97f00d688e6258fd433bd1f3",
+    "Sources/ManagementViews.swift": "822b03b1fe0ca1d41f8c2e4b4d1325ebf87f6f91c3a64887129824349e97840d",
+    "Sources/MoveEngine.swift": "9171376808c1b00149af141d458f969fa2199c1d550048fc9d5ddff411cd5aa0",
+    "Sources/MoveModels.swift": "2df7eff780753bbaa07d628a9bfd40f1d5c78f7fedc2733c8c373f3e3237b72f",
+    "Sources/SettingsView.swift": "0e57fb9d8ec178bf1d4305fa1542f9b48f078e8800298d7afc7b94c9e975795f",
+    "Sources/WorkspaceView.swift": "e0a3c16c8fae841fe6178e1ff51e54a4cc079f86e5ffa4e9bc2c2e2ce78e40f4",
+    "VERSION": "0d00c37539f0a03508aa902f0ab58adc7965f1f4554b118559cc21f5eb0edfa1",
+    "使用说明.txt": "9d6c9128da1270659b26a9d08579a61aa061597e7fb004d1ff87dfff8f80fb89"
+  },
+  "scope": "Ordinary-file reference fractional mtime only; global envelope dates, TTL and consumer guards unchanged. Build/installer changes prevent duplicate expanded install entries and preserve verified rollback."
+}
