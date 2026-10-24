@@ -296,6 +296,73 @@ def unregister(path):
     return 'unregistered' if result.returncode == 0 else 'notRegistered'
 
 
+def preferences_entry(path):
+    before = path.lstat()
+    if not stat.S_ISREG(before.st_mode):
+        raise RuntimeError('Preferences must be a regular, non-linked file')
+    value = entry(path)
+    after = path.lstat()
+    if (before.st_dev, before.st_ino, before.st_uid, before.st_gid) != (after.st_dev, after.st_ino, after.st_uid, after.st_gid):
+        raise RuntimeError('Preferences identity changed while reading')
+    return dict(value, uid=after.st_uid, gid=after.st_gid)
+
+
+def xattr_length(path, name):
+    if hasattr(os, 'getxattr'):
+        return len(os.getxattr(path, name, follow_symlinks=False))
+    libc = ctypes.CDLL(None, use_errno=True)
+    libc.getxattr.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_void_p, ctypes.c_size_t, ctypes.c_uint32, ctypes.c_int]
+    libc.getxattr.restype = ctypes.c_ssize_t
+    size = libc.getxattr(os.fsencode(path), os.fsencode(name), None, 0, 0, 1)
+    if size < 0:
+        raise OSError(ctypes.get_errno(), 'Cannot read preferences attribute length', str(path))
+    return size
+
+
+def preferences_preservation(original, copied):
+    """Preferences only: retain every original value; identify one added OS label."""
+    if {k: v for k, v in original.items() if k != 'xattrs'} != {k: v for k, v in copied.items() if k != 'xattrs'}:
+        raise RuntimeError('Preferences bytes, mode or owner backup mismatch')
+    old_attrs, new_attrs = original['xattrs'], copied['xattrs']
+    if any(name not in new_attrs or new_attrs[name] != value for name, value in old_attrs.items()):
+        raise RuntimeError('Original preferences metadata changed or is missing from backup')
+    added = new_attrs.keys() - old_attrs.keys()
+    if added and added != {'com.apple.provenance'}:
+        raise RuntimeError('Unexpected extra preferences backup metadata')
+    return added
+
+
+def backup_preferences(source, target, expected, identity):
+    if present(target):
+        raise RuntimeError('Preferences backup target already exists')
+    def verify_source():
+        if object_identity(source) != identity or preferences_entry(source) != expected or object_identity(source) != identity:
+            raise RuntimeError('Original preferences identity or complete entry changed')
+    verify_source()
+    run('/usr/bin/ditto', '--rsrc', '--extattr', str(source), str(target))
+    copied = preferences_entry(target)
+    added = preferences_preservation(expected, copied)
+    added_proof = {name: {'length': xattr_length(target, name), 'sha256': copied['xattrs'][name]}
+                   for name in added}
+    if preferences_entry(target) != copied:
+        raise RuntimeError('Preferences backup changed while recording its metadata')
+    verify_source()
+    with tempfile.TemporaryDirectory(prefix='gaozhengli-preferences-restore-', suffix='.noindex', dir='/private/tmp') as folder:
+        restored = P(folder) / 'Preferences.plist'
+        run('/usr/bin/ditto', '--rsrc', '--extattr', str(target), str(restored))
+        restored_entry = preferences_entry(restored)
+        if restored_entry != copied or preferences_entry(target) != copied:
+            raise RuntimeError('Preferences restore rehearsal differs from the recorded backup entry')
+        preferences_preservation(expected, restored_entry)
+    verify_source()
+    return {'schemaVersion': 1, 'type': 'preferences-added-provenance' if added else 'preferences-exact-copy',
+            'originalEntry': expected, 'backupEntry': copied, 'sourceIdentity': identity,
+            'sourceIdentityAndEntryUnchanged': True, 'inventoryEqual': expected == copied,
+            'addedAttrProof': added_proof,
+            'restoreRehearsal': {'backupEntryEqual': True, 'allOriginalAttributesPreserved': True,
+                                 'originalInventoryEqual': expected == restored_entry, 'restoredEntry': restored_entry}}
+
+
 def object_identity(path):
     value = path.lstat()
     return {'device': value.st_dev, 'inode': value.st_ino}
@@ -308,11 +375,12 @@ def verify_original(path, info, manifest, identity):
 
 def write_receipts(backup, record, original_info, original_manifest):
     write_record(backup / 'install-record.json', record)
-    if 'app' in record['backups']:
+    if 'app' in record['backups'] or 'preferencesBackupVerification' in record:
         write_record(backup / 'restore-verification.json', {
             'schemaVersion': 2, 'originalApp': str(TARGET), 'originalInfoPlist': original_info,
-            'archive': record['archivedBackups']['app'], 'inventory': original_manifest,
+            'archive': record['archivedBackups'].get('app'), 'inventory': original_manifest,
             'authoritativeOriginalProgram': record.get('retainedOriginalProgram'),
+            'preferencesBackupVerification': record.get('preferencesBackupVerification'),
             'installationStatus': record['status']})
 
 
@@ -324,6 +392,10 @@ def install(source):
         original_manifest = inventory(TARGET) if original_info else None
         original_identity = object_identity(TARGET) if original_info else None
         before = state_snapshot()
+        prefs_identity = object_identity(PREFS) if before['preferences'] is not None else None
+        prefs_before = preferences_entry(PREFS) if before['preferences'] is not None else None
+        if prefs_before is not None and (object_identity(PREFS) != prefs_identity or {k: v for k, v in prefs_before.items() if k not in ('uid', 'gid')} != before['preferences']):
+            raise RuntimeError('Original preferences changed before backup preparation')
         if present(BACKUPS) and (BACKUPS.is_symlink() or not BACKUPS.is_dir() or BACKUPS.stat().st_uid != os.getuid()):
             raise RuntimeError('Backup directory identity is invalid')
         BACKUPS.mkdir(parents=True, mode=0o700, exist_ok=True)
@@ -368,9 +440,7 @@ def install(source):
                 if record['backups']['data'] != before['data']:
                     raise RuntimeError('Data changed before backup finished')
             if before['preferences'] is not None:
-                run('/usr/bin/ditto', '--rsrc', '--extattr', str(PREFS), str(backup / 'Preferences.plist'))
-                if entry(PREFS) != before['preferences'] or entry(backup / 'Preferences.plist') != before['preferences']:
-                    raise RuntimeError('Preferences backup mismatch')
+                record['preferencesBackupVerification'] = backup_preferences(PREFS, backup / 'Preferences.plist', prefs_before, prefs_identity)
                 record['backups']['preferences'] = before['preferences']
             verify_state(before)
             record['status'] = 'backup-verified-pending-original-retention' if retained else 'backup-verified'
@@ -485,7 +555,7 @@ def install(source):
         record['temporaryAppsRemoved'] = True
         persist()
         return {'installed': str(TARGET), 'version': info['CFBundleShortVersionString'], 'build': info['CFBundleVersion'],
-                'backupRecord': str(receipt), 'restoreVerification': str(backup / 'restore-verification.json') if original_info else None,
+                'backupRecord': str(receipt), 'restoreVerification': str(backup / 'restore-verification.json') if original_info or 'preferencesBackupVerification' in record else None,
                 'previousAppArchive': record['archivedBackups'].get('app'),
                 'retainedOriginalProgram': retained, 'gui_verified': False, 'firstInstall': record['firstInstall']}
 

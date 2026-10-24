@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Isolated packaging/rollback tests: real ditto on fixtures; no GUI, install or LS calls."""
 import importlib.util
+import contextlib
 import json
 import os
 from pathlib import Path
@@ -381,6 +382,154 @@ class PackagingTests(unittest.TestCase):
         _, record = self.receipt()
         self.assertEqual(record['status'], 'failed-before-replacement')
         self.assertTrue(record['oldProgramUnchanged'])
+
+
+    def preference_metadata_fixture(self, variant='addition'):
+        native = installer.preferences_entry
+        original_attrs = {'fixture.original': 'a' * 64}
+        if variant == 'existing-provenance-changed':
+            original_attrs['com.apple.provenance'] = 'b' * 64
+        def read(path):
+            value = native(path)
+            value['xattrs'] = dict(original_attrs)
+            if path != self.prefs:
+                if variant == 'changed':
+                    value['xattrs']['fixture.original'] = 'c' * 64
+                elif variant == 'missing':
+                    value['xattrs'].pop('fixture.original')
+                elif variant == 'other-extra':
+                    value['xattrs']['fixture.other'] = 'd' * 64
+                elif variant == 'owner-changed':
+                    value['uid'] += 1
+                elif variant == 'existing-provenance-changed':
+                    value['xattrs']['com.apple.provenance'] = 'e' * 64
+                else:
+                    value['xattrs']['com.apple.provenance'] = 'f' * 64
+                    if variant == 'restore-changed' and path.parent.name.startswith('gaozhengli-preferences-restore-'):
+                        value['xattrs']['com.apple.provenance'] = '0' * 64
+            return value
+        return read
+
+    def preference_metadata_context(self, variant='addition'):
+        native_entry = installer.entry
+        read = self.preference_metadata_fixture(variant)
+        source_attrs = read(self.prefs)['xattrs']
+        def source_entry(path):
+            value = native_entry(path)
+            if path == self.prefs:
+                value['xattrs'] = dict(source_attrs)
+            return value
+        stack = contextlib.ExitStack()
+        stack.enter_context(mock.patch.object(installer, 'entry', source_entry))
+        stack.enter_context(mock.patch.object(installer, 'preferences_entry', read))
+        return stack
+
+    def test_preferences_only_provenance_addition_records_both_receipts(self):
+        before = installer.state_snapshot()
+        identity = installer.object_identity(self.prefs)
+        with self.preference_metadata_context():
+            with mock.patch.object(installer, 'xattr_length', return_value=17):
+                result = installer.install(self.source)
+        _, record = self.receipt()
+        proof = record['preferencesBackupVerification']
+        self.assertEqual(proof['type'], 'preferences-added-provenance')
+        self.assertFalse(proof['inventoryEqual'])
+        self.assertEqual(proof['sourceIdentity'], identity)
+        self.assertTrue(proof['sourceIdentityAndEntryUnchanged'])
+        self.assertEqual(proof['originalEntry']['uid'], self.prefs.stat().st_uid)
+        self.assertEqual(proof['originalEntry']['gid'], self.prefs.stat().st_gid)
+        self.assertEqual(proof['addedAttrProof'], {'com.apple.provenance': {'length': 17, 'sha256': 'f' * 64}})
+        self.assertTrue(proof['restoreRehearsal']['backupEntryEqual'])
+        self.assertTrue(proof['restoreRehearsal']['allOriginalAttributesPreserved'])
+        self.assertFalse(proof['restoreRehearsal']['originalInventoryEqual'])
+        self.assertEqual(proof['restoreRehearsal']['restoredEntry'], proof['backupEntry'])
+        self.assertEqual(record['backups']['preferences'], {k: v for k, v in proof['originalEntry'].items() if k not in ('uid', 'gid')})
+        restore = json.loads(Path(result['restoreVerification']).read_text())
+        self.assertEqual(restore['preferencesBackupVerification'], proof)
+        self.assertEqual(installer.state_snapshot(), before)
+        self.assertEqual(installer.object_identity(self.prefs), identity)
+        self.assertEqual(installer.plist(self.target)['CFBundleVersion'], '2')
+
+    def assert_preferences_metadata_refused(self, variant):
+        before = installer.state_snapshot()
+        with self.preference_metadata_context(variant):
+            with mock.patch.object(installer, 'xattr_length', return_value=17):
+                with self.assertRaises(RuntimeError):
+                    installer.install(self.source)
+        self.assert_old_target()
+        self.assertEqual(installer.state_snapshot(), before)
+        _, record = self.receipt()
+        self.assertEqual(record['status'], 'failed-before-replacement')
+        self.assertTrue(record['oldProgramUnchanged'])
+        self.assertNotIn('preferencesBackupVerification', record)
+        self.assertFalse(any(args[0] == installer.LS for args in self.commands))
+
+    def test_preferences_original_metadata_changed_is_rejected(self):
+        self.assert_preferences_metadata_refused('changed')
+
+    def test_preferences_original_metadata_missing_is_rejected(self):
+        self.assert_preferences_metadata_refused('missing')
+
+    def test_preferences_other_added_metadata_is_rejected(self):
+        self.assert_preferences_metadata_refused('other-extra')
+
+    def test_preferences_existing_provenance_changed_is_rejected(self):
+        self.assert_preferences_metadata_refused('existing-provenance-changed')
+
+    def test_preferences_owner_change_is_rejected(self):
+        self.assert_preferences_metadata_refused('owner-changed')
+
+    def test_preferences_restore_metadata_change_is_rejected(self):
+        self.assert_preferences_metadata_refused('restore-changed')
+
+    def test_preferences_copy_failure_aborts_before_program_replacement(self):
+        before = installer.state_snapshot()
+        def fail(args, kwargs):
+            if args[0] == '/usr/bin/ditto' and args[-2] == str(self.prefs):
+                raise subprocess.CalledProcessError(1, args)
+        self.fail = fail
+        with self.assertRaises(subprocess.CalledProcessError):
+            installer.install(self.source)
+        self.assert_old_target()
+        self.assertEqual(installer.state_snapshot(), before)
+        _, record = self.receipt()
+        self.assertEqual(record['status'], 'failed-before-replacement')
+        self.assertTrue(record['oldProgramUnchanged'])
+        self.assertFalse(any(args[0] == installer.LS for args in self.commands))
+
+    def test_preferences_restore_copy_failure_aborts_before_program_replacement(self):
+        before = installer.state_snapshot()
+        def fail(args, kwargs):
+            if args[0] == '/usr/bin/ditto' and 'gaozhengli-preferences-restore-' in args[-1]:
+                raise subprocess.CalledProcessError(1, args)
+        self.fail = fail
+        with self.assertRaises(subprocess.CalledProcessError):
+            installer.install(self.source)
+        self.assert_old_target()
+        self.assertEqual(installer.state_snapshot(), before)
+        _, record = self.receipt()
+        self.assertEqual(record['status'], 'failed-before-replacement')
+        self.assertTrue(record['oldProgramUnchanged'])
+        self.assertFalse(any(args[0] == installer.LS for args in self.commands))
+
+    def test_preferences_source_identity_change_aborts_before_program_replacement(self):
+        native_identity = installer.object_identity
+        copied = False
+        def observe_copy(args, kwargs):
+            nonlocal copied
+            if args[0] == '/usr/bin/ditto' and args[-2] == str(self.prefs):
+                copied = True
+        def changed_identity(path):
+            value = native_identity(path)
+            return dict(value, inode=value['inode'] + 1) if path == self.prefs and copied else value
+        self.fail = observe_copy
+        before = installer.state_snapshot()
+        with mock.patch.object(installer, 'object_identity', changed_identity):
+            with self.assertRaisesRegex(RuntimeError, 'Original preferences identity'):
+                installer.install(self.source)
+        self.assert_old_target()
+        self.assertEqual(installer.state_snapshot(), before)
+        self.assertTrue(self.receipt()[1]['oldProgramUnchanged'])
 
 
     def test_source_requires_private_nonlinked_noindex(self):

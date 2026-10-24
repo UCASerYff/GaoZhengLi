@@ -7,7 +7,6 @@
   "architecture": "arm64",
   "minimumMacOS": "14.0",
   "compiledPayloadCommit": "bd6372275fb553a7f082b4be7d219b06490b1321",
-  "finalInstallerFixCommit": "49b734177d229ceebe45dc1fd172442e169f21f0",
   "compiledPayloadUnchangedAfterBuild": true,
   "executableSHA256": "8605ecf1c99eb1b3c9d008a4de03dbec9585026186be3932fb3ce9b658d69794",
   "capabilitiesSHA256": "a431d9efdca9f2716921bf5f1519eca883e427e2b0ef8dabc8fc9fb873aa73af",
@@ -51,5 +50,8 @@
     "VERSION": "0d00c37539f0a03508aa902f0ab58adc7965f1f4554b118559cc21f5eb0edfa1",
     "使用说明.txt": "9d6c9128da1270659b26a9d08579a61aa061597e7fb004d1ff87dfff8f80fb89"
   },
-  "scope": "Ordinary-file reference fractional mtime only; global envelope dates, TTL and consumer guards unchanged. Build/installer changes prevent duplicate expanded install entries and preserve verified rollback."
+  "scope": "Ordinary-file reference fractional mtime only; global envelope dates, TTL and consumer guards unchanged. Build/installer changes prevent duplicate expanded install entries and preserve verified rollback.",
+  "rollbackReceiptFixCommit": "49b734177d229ceebe45dc1fd172442e169f21f0",
+  "installerSource": "Scripts/install.py in this source archive; the Release target identifies the final source commit.",
+  "installerSHA256": "11b1e4c51e1c41c7a1f48ed159e82ab5b113b44dc4e447747d3da9175bd047be"
 }
