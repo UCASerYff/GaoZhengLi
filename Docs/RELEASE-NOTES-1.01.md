@@ -1,0 +1,11 @@
+搞整理 V1.01 / build 2（原 V1.00 / build 1）。
+
+修复 `files.choose` 普通文件原件引用的 `declaredIdentity.modifiedAt` 编码精度。先从 stat 秒与纳秒构造 Date，再由 UTC ISO8601DateFormatter 的 `.withInternetDateTime`、`.withFractionalSeconds` 编码，与搞研究现有管线一致；不手动截断毫秒。
+
+全局 formatDate、目录/应用引用、包 createdAt/expiresAt、120 秒 TTL、身份/大小/内容及参数限制保持原样。消费者保留原来的严格检查。时间字段和接收时的本机摘要不证明与提供方选择时的内容快照相等。
+
+新增 206 项隔离定向检查，涵盖真实纳秒读回、8 组边界、未修改搞研究源码的精确 Date 对照、未修改搞文件源码的原 <1ms gate、错误身份/不同秒拒绝及包 TTL 不变。源码级兼容不替代安装版 fresh 请求验收；消费者实际回执以本轮交付记录为准。未运行通用冒烟测试。
+
+同时按现有安装规则收拢打包：构建和解压只用私有临时 `.noindex` 目录，永久只保留压缩发行包；旧程序备份须经解压内容、模式、扩展属性、Info.plist 与签名核验，实际资料与设置完整备份，失败回滚。只保留正式安装入口，不重置其他应用或全局索引。
+
+Apple Development 团队 5G96498KGJ 本机签名，未作 Developer ID 公证。SHA256SUMS 随发行提供；程序、源码发行包不包含用户索引、书签、设置、私有附件、备份或凭据。

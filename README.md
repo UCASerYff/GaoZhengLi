@@ -1,6 +1,6 @@
 # 搞整理
 
-原生 macOS 文件查找与虚拟工作区，V1.00 / build 1。SwiftUI + AppKit，Apple Silicon，macOS 14 或更新版本。
+原生 macOS 文件查找与虚拟工作区，V1.01 / build 2。SwiftUI + AppKit，Apple Silicon，macOS 14 或更新版本。
 
 - SQLite 元数据索引，授权根、卷与对象身份核验、FTS5 运行时探测、可取消/续扫与 FSEvents 提示回补。
 - 中文与 Unicode 搜索，名称/路径/类型/扩展名/大小/日期/目录筛选，排序分页、收藏、应用内标签和保存查询。
@@ -17,10 +17,10 @@
 ```sh
 Scripts/test.sh
 Scripts/build.sh
-python3 Scripts/install.py "$PWD/搞整理.app"
+python3 Scripts/install.py "$PWD/dist/GaoZhengLi-$(tr -d '\n' < VERSION)-macOS.zip"
 ```
 
-构建默认 ad-hoc 签名；本次正式产物使用已验证的 Apple Development 团队 5G96498KGJ 证书，通过环境变量 `GAOZHENGLI_SIGN_IDENTITY` 指定。本机开发签名不等于 Developer ID 公证。`Scripts/build.sh --app-only /absolute/new.app` 可仅生成程序。构建不启动程序；测试使用隔离原创临时文件，不改真实默认关联。
+构建默认 ad-hoc 签名；本次正式产物使用已验证的 Apple Development 团队 5G96498KGJ 证书，通过环境变量 `GAOZHENGLI_SIGN_IDENTITY` 指定。本机开发签名不等于 Developer ID 公证。`Scripts/build.sh --app-only /absolute/private.noindex/new.app` 可仅生成临时程序；该 `.noindex` 目录须已存在、归当前用户所有且权限为 0700。构建不启动程序；测试使用隔离原创临时文件，不改真实默认关联。
 
 安装脚本只处理本 Bundle，安装前备份并逐文件核验已有资料、设置与旧程序；失败恢复旧程序，保留长期备份。安装不附带 `open`。发行包位于 `dist/`，源代码压缩包由版本控制的公开文件生成，SHA-256 随发行提供。
 
@@ -41,3 +41,5 @@ python3 Scripts/install.py "$PWD/搞整理.app"
 MIT。图标使用程序化原创构图，纯灰 `#777777` 860×860 圆角色块、透明外围、白色竖排系统楷体字形，1024×1024；只包含渲染轮廓，不分发系统字体文件。GaoAction 实现基于本工作区同系列既有公开协议代码的适配，未复制第三方产品实现、私有资产或用户数据。
 
 安装布局说明：项目内的展开版 App 是临时构建产物。正式使用只保留 `/Applications/搞整理.app`，项目程序与旧程序备份长期保留为经过解压核验的 ZIP/DMG，以防启动台出现重复入口。见 [登记处理记录](Docs/REGISTRATION.md) 与 AGENTS.md 的后续发布规则。
+
+V1.01 仅修复 `files.choose` 普通文件原件引用的修改时间编码：采用与搞研究相同的 Date → UTC 小数秒格式器，使搞文件原有严格校验可接受。目录/应用引用、包创建和过期时间、120 秒 TTL 及身份/内容校验保持原样。时间字段不证明原件内容快照相等，见 [定向对照](Docs/REFERENCE-MTIME.md)。

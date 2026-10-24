@@ -258,6 +258,14 @@ public enum GaoActionV1 {
         "portal.proposeSite":["url","title"], "portal.prepareDownload":["urls"], "downloads.prepare":["urls","mediaType"]
     ]
     public static func formatDate(_ date: Date) -> String { ISO8601DateFormatter().string(from: date) }
+    /// Reference metadata uses the same Date/UTC fractional formatter as the Research consumer.
+    /// Envelope timestamps keep formatDate and their existing TTL semantics.
+    public static func formatReferenceModifiedAt(_ date: Date) -> String {
+        let formatter = ISO8601DateFormatter()
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter.string(from: date)
+    }
     public static func parseDate(_ string: String) -> Date? {
         guard string.hasSuffix("Z") else { return nil }
         let f = ISO8601DateFormatter()
@@ -458,7 +466,8 @@ public enum GaoActionV1 {
         guard isDirectory || s.st_mode & S_IFMT == S_IFREG else {throw GaoActionError.invalidPackage("引用仅支持普通文件、目录或应用")}
         let bundle=isDirectory && canonical.pathExtension.lowercased()=="app" ? Bundle(url:canonical)?.bundleIdentifier : nil
         let volume=try? canonical.resourceValues(forKeys:[.volumeUUIDStringKey]).volumeUUIDString
-        let identity=GaoActionIdentity(volumeUUID:volume ?? nil,device:s.st_dev,inode:UInt64(s.st_ino),byteCount:UInt64(max(0,s.st_size)),modifiedAt:formatDate(Date(timeIntervalSince1970:Double(s.st_mtimespec.tv_sec)+Double(s.st_mtimespec.tv_nsec)/1e9)))
+        let modified = Date(timeIntervalSince1970: TimeInterval(s.st_mtimespec.tv_sec) + TimeInterval(s.st_mtimespec.tv_nsec) / 1_000_000_000)
+        let identity=GaoActionIdentity(volumeUUID:volume ?? nil,device:s.st_dev,inode:UInt64(s.st_ino),byteCount:UInt64(max(0,s.st_size)),modifiedAt:isDirectory ? formatDate(modified) : formatReferenceModifiedAt(modified))
         return GaoActionReference(id:id,kind:bundle != nil ? .application : (isDirectory ? .directory : .file),fileURL:canonical.absoluteString,displayName:canonical.lastPathComponent,declaredIdentity:identity,bundleID:bundle)
     }
     /// References are untrusted descriptions, not grants of access. All non-null fields must still match.

@@ -1,0 +1,259 @@
+#!/usr/bin/env python3
+"""Isolated packaging/rollback tests: real ditto on fixtures; no GUI, install or LS calls."""
+import importlib.util
+import json
+import os
+from pathlib import Path
+import plistlib
+import re
+import stat
+import subprocess
+import sys
+import tempfile
+import unittest
+from unittest import mock
+import zipfile
+
+sys.dont_write_bytecode = True
+PROJECT = Path(__file__).resolve().parents[1]
+spec = importlib.util.spec_from_file_location('gaozhengli_installer', PROJECT / 'Scripts/install.py')
+installer = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(installer)
+REAL_RUN = subprocess.run
+
+
+class PackagingTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix='gaozhengli-packaging-tests-', suffix='.noindex', dir='/private/tmp')
+        self.root = Path(self.temp.name)
+        self.target = self.root / 'Applications/搞整理.app'
+        self.target.parent.mkdir()
+        self.source = self.root / 'release/搞整理.app'
+        self.data = self.root / 'Data'
+        self.data.mkdir(mode=0o700)
+        self.backups = self.root / 'Backups'
+        self.prefs = self.root / 'Preferences.plist'
+        for name in installer.EXPECTED:
+            path = self.data / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(('fixture:' + name).encode())
+        (self.data / '.app.lock').touch(mode=0o600)
+        (self.data / 'metadata.sqlite-wal').write_bytes(b'fixture-uncheckpointed-wal')
+        (self.data / 'metadata.sqlite-shm').write_bytes(b'fixture-shm')
+        (self.data / 'Attachments').mkdir()
+        (self.data / 'Attachments/private.bin').write_bytes(b'fixture-private-attachment')
+        (self.data / 'Empty').mkdir()
+        self.prefs.write_bytes(plistlib.dumps({'GaoZhengLi.initialized.v1': True, 'fixtureSetting': 'kept'}))
+        os.chmod(self.prefs, 0o600)
+        self.make_app(self.target, '1.00', '1')
+        self.make_app(self.source, '1.01', '2')
+        self.commands = []
+        self.fail = None
+        self.running = False
+        self.patchers = [mock.patch.object(installer, name, value) for name, value in
+                         [('TARGET', self.target), ('DATA', self.data), ('BACKUPS', self.backups), ('PREFS', self.prefs)]]
+        for patcher in self.patchers:
+            patcher.start()
+        self.patchers.append(mock.patch.object(installer.subprocess, 'run', self.command))
+        self.patchers[-1].start()
+
+    def tearDown(self):
+        for patcher in reversed(self.patchers):
+            patcher.stop()
+        self.temp.cleanup()
+
+    def make_app(self, path, version, build):
+        (path / 'Contents/MacOS').mkdir(parents=True)
+        (path / 'Contents/Info.plist').write_bytes(plistlib.dumps({
+            'CFBundleIdentifier': installer.BUNDLE, 'CFBundleExecutable': 'GaoZhengLi',
+            'CFBundleShortVersionString': version, 'CFBundleVersion': build}))
+        exe = path / 'Contents/MacOS/GaoZhengLi'
+        exe.write_bytes(('fixture-version-' + version).encode())
+        exe.chmod(0o755)
+
+    def command(self, args, **kwargs):
+        args = tuple(map(str, args))
+        self.commands.append(args)
+        if self.fail:
+            result = self.fail(args, kwargs)
+            if result is not None:
+                return result
+        if args[0] == '/usr/bin/ditto':
+            # Archive/copy/extraction paths are all synthetic fixtures or private temporary paths.
+            return REAL_RUN(args, **kwargs)
+        if args[0] == '/usr/bin/pgrep':
+            return subprocess.CompletedProcess(args, 0 if self.running else 1)
+        if args[0] == '/usr/bin/defaults':
+            return subprocess.CompletedProcess(args, 0, '1\n', '')
+        if args[0] in ('/usr/bin/codesign', installer.LS):
+            return subprocess.CompletedProcess(args, 0, '', '')
+        raise AssertionError('Unexpected external command: ' + repr(args))
+
+    def receipt(self):
+        paths = list(self.backups.glob('Install-*/install-record.json'))
+        self.assertEqual(len(paths), 1)
+        return paths[0], json.loads(paths[0].read_text())
+
+    def assert_old_target(self):
+        self.assertEqual(installer.plist(self.target)['CFBundleVersion'], '1')
+        self.assertFalse(list(self.target.parent.glob('*.noindex')))
+        self.assertFalse(list(self.backups.rglob('*.app')))
+
+    def test_expected_files_match_app_initialization_contract(self):
+        source = (PROJECT / 'Sources/Configuration.swift').read_text()
+        names = re.search(r'let expected = (\[[^\n]+\])', source).group(1)
+        self.assertEqual(list(installer.EXPECTED), json.loads(names))
+
+    def test_success_archives_app_and_preserves_all_state(self):
+        before = installer.state_snapshot()
+        result = installer.install(self.source)
+        self.assertEqual(installer.state_snapshot(), before)
+        self.assertEqual(installer.plist(self.target)['CFBundleVersion'], '2')
+        self.assertFalse(list(self.target.parent.glob('*.noindex')))
+        receipt_path, record = self.receipt()
+        archive = record['archivedBackups']['app']
+        self.assertEqual(archive['sha256'], installer.sha256(Path(archive['path'])))
+        self.assertTrue(archive['inventoryVerified'] and archive['signatureVerified'])
+        self.assertIn('metadata.sqlite-wal', record['backups']['data'])
+        self.assertIn('metadata.sqlite-shm', record['backups']['data'])
+        self.assertIn('Attachments/private.bin', record['backups']['data'])
+        self.assertIn('Empty', record['backups']['data'])
+        self.assertEqual(record['backups']['data'], before['data'])
+        restore = json.loads(Path(result['restoreVerification']).read_text())
+        self.assertEqual(restore['inventory'], record['backups']['app'])
+        self.assertEqual(record['status'], 'installed-verified')
+        self.assertTrue(record['temporaryAppsRemoved'])
+        self.assertEqual(Path(result['backupRecord']), receipt_path)
+        self.assertFalse(list(self.backups.rglob('*.app')))
+        registrations = [args for args in self.commands if args[0] == installer.LS]
+        self.assertEqual(len(registrations), 4)
+        self.assertEqual(registrations[-1], (installer.LS, '-f', str(self.target)))
+        self.assertTrue(all(len(args) == 3 and args[1] in ('-u', '-f') for args in registrations))
+
+    def test_release_zip_extracts_only_in_private_noindex(self):
+        archive = self.root / 'release.zip'
+        REAL_RUN(['/usr/bin/ditto', '-c', '-k', '--sequesterRsrc', '--keepParent', str(self.source), str(archive)], check=True)
+        with installer.candidate(str(archive)) as extracted:
+            self.assertEqual(installer.inventory(extracted), installer.inventory(self.source))
+            self.assertTrue(extracted.parent.name.endswith('.noindex'))
+            extracted_root = extracted.parent
+        self.assertFalse(extracted_root.exists())
+
+    def test_running_app_aborts_before_backup_or_program_mutation(self):
+        self.running = True
+        before = installer.inventory(self.target)
+        with self.assertRaisesRegex(RuntimeError, 'Quit'):
+            installer.install(self.source)
+        self.assertEqual(installer.inventory(self.target), before)
+        self.assertFalse(self.backups.exists())
+
+    def test_missing_initialized_file_fails_closed(self):
+        (self.data / 'configuration.json').unlink()
+        with self.assertRaisesRegex(RuntimeError, 'incomplete'):
+            installer.install(self.source)
+        self.assert_old_target()
+        self.assertFalse(self.backups.exists())
+
+    def test_missing_initialized_data_fails_closed(self):
+        import shutil
+        shutil.rmtree(self.data)
+        with self.assertRaisesRegex(RuntimeError, 'incomplete'):
+            installer.install(self.source)
+        self.assertFalse(self.data.exists())
+        self.assert_old_target()
+
+    def test_unreadable_walk_is_not_an_empty_inventory(self):
+        def denied(*args, **kwargs):
+            kwargs['onerror'](PermissionError('fixture inaccessible subtree'))
+            return iter(())
+        with mock.patch.object(installer.os, 'walk', denied):
+            with self.assertRaises(PermissionError):
+                installer.inventory(self.data)
+
+    def test_failed_installed_signature_restores_old_app(self):
+        before = installer.state_snapshot()
+        def fail(args, kwargs):
+            if args[0] == '/usr/bin/codesign' and args[-1] == str(self.target) and installer.plist(self.target)['CFBundleVersion'] == '2':
+                raise subprocess.CalledProcessError(1, args)
+        self.fail = fail
+        with self.assertRaises(subprocess.CalledProcessError):
+            installer.install(self.source)
+        self.assert_old_target()
+        self.assertEqual(installer.state_snapshot(), before)
+        _, record = self.receipt()
+        self.assertTrue(record['rollbackProgramVerified'])
+        self.assertFalse(record['installedVerified'])
+
+    def test_registration_failure_cannot_block_program_rollback(self):
+        before = installer.state_snapshot()
+        def fail(args, kwargs):
+            if args[:2] == (installer.LS, '-f'):
+                raise subprocess.CalledProcessError(1, args)
+            if args[:3] == (installer.LS, '-u', str(self.target)):
+                return subprocess.CompletedProcess(args, 1, '', 'fixture registry inaccessible')
+        self.fail = fail
+        with self.assertRaisesRegex(RuntimeError, 'rollback requires attention'):
+            installer.install(self.source)
+        self.assert_old_target()
+        self.assertEqual(installer.state_snapshot(), before)
+        _, record = self.receipt()
+        self.assertTrue(record['rollbackProgramVerified'])
+        self.assertTrue(record['rollbackErrors'])
+
+    def test_failed_source_unregister_restores_old_app(self):
+        def fail(args, kwargs):
+            if args[:3] == (installer.LS, '-u', str(self.source)):
+                return subprocess.CompletedProcess(args, 1, '', 'fixture unregister failed')
+        self.fail = fail
+        with self.assertRaises(RuntimeError):
+            installer.install(self.source)
+        self.assert_old_target()
+        self.assertTrue(self.receipt()[1]['rollbackProgramVerified'])
+
+    def test_external_data_change_is_detected_and_preserved_for_recovery(self):
+        before = installer.state_snapshot()
+        changed = self.data / 'configuration.json'
+        def fail(args, kwargs):
+            if args[:2] == (installer.LS, '-f') and installer.plist(self.target)['CFBundleVersion'] == '2':
+                changed.write_bytes(b'external fixture change')
+        self.fail = fail
+        with self.assertRaisesRegex(RuntimeError, 'changed during installation'):
+            installer.install(self.source)
+        self.assert_old_target()
+        self.assertEqual(changed.read_bytes(), b'external fixture change')
+        _, record = self.receipt()
+        self.assertEqual(record['backups']['data'], before['data'])
+        self.assertEqual((Path(self.receipt()[0]).parent / 'Data/configuration.json').read_bytes(), b'fixture:configuration.json')
+
+    def test_corrupt_restore_archive_aborts_before_replacement(self):
+        with mock.patch.object(installer, 'verify_archive', side_effect=RuntimeError('fixture restore mismatch')):
+            with self.assertRaisesRegex(RuntimeError, 'restore mismatch'):
+                installer.install(self.source)
+        self.assert_old_target()
+
+    def test_source_requires_private_nonlinked_noindex(self):
+        installer.private_staging_source(self.source)
+        public = self.root / 'Public.noindex'
+        public.mkdir(mode=0o755)
+        with self.assertRaisesRegex(RuntimeError, 'private'):
+            installer.private_staging_source(public / 'fixture.app')
+        with self.assertRaisesRegex(RuntimeError, 'noindex'):
+            installer.private_staging_source(Path('/private/tmp/fixture.app'))
+        linked = self.root / 'linked.app'
+        linked.symlink_to(self.source)
+        with self.assertRaisesRegex(RuntimeError, 'non-linked'):
+            installer.private_staging_source(linked)
+
+    def test_archive_rejects_path_escape_and_links(self):
+        for name, mode in [('搞整理.app/../../outside', 0), ('搞整理.app/Contents/link', stat.S_IFLNK | 0o777), ('other.app/file', 0)]:
+            archive = self.root / 'unsafe.zip'
+            with zipfile.ZipFile(archive, 'w') as zipped:
+                info = zipfile.ZipInfo(name)
+                info.external_attr = mode << 16
+                zipped.writestr(info, b'../../outside')
+            with self.assertRaises(RuntimeError):
+                installer.safe_zip(archive, '搞整理.app')
+
+
+if __name__ == '__main__':
+    unittest.main(verbosity=2)
