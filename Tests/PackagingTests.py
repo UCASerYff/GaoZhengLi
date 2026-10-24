@@ -531,6 +531,60 @@ class PackagingTests(unittest.TestCase):
         self.assertEqual(installer.state_snapshot(), before)
         self.assertTrue(self.receipt()[1]['oldProgramUnchanged'])
 
+    def test_preferences_native_restore_preserves_source_group_across_tmp_inheritance(self):
+        group = os.getgid()
+        if self.root.stat().st_gid == group:
+            self.skipTest('Private temp directories already inherit the process group; no native GID difference available')
+        self.backups.mkdir(mode=0o700)
+        try:
+            os.chown(self.prefs, -1, group)
+            os.chown(self.backups, -1, group)
+        except PermissionError:
+            self.skipTest('Cannot prepare owned synthetic group fixture')
+        before = installer.state_snapshot()
+        identity = installer.object_identity(self.prefs)
+        restore_groups = []
+        def observe(args, kwargs):
+            if args[0] == '/usr/bin/ditto' and 'gaozhengli-preferences-restore-' in args[-1]:
+                restore_groups.append(Path(args[-1]).parent.stat().st_gid)
+        self.fail = observe
+        result = installer.install(self.source)
+        _, record = self.receipt()
+        proof = record['preferencesBackupVerification']
+        for value in (proof['originalEntry'], proof['backupEntry'], proof['restoreRehearsal']['restoredEntry']):
+            self.assertEqual(value['gid'], group)
+        self.assertEqual(restore_groups, [group])
+        self.assertTrue(proof['restoreRehearsal']['backupEntryEqual'])
+        self.assertEqual(installer.state_snapshot(), before)
+        self.assertEqual(installer.object_identity(self.prefs), identity)
+        self.assertEqual(json.loads(Path(result['restoreVerification']).read_text())['preferencesBackupVerification'], proof)
+
+    def test_preferences_restore_directory_group_permission_failure_aborts_replacement(self):
+        from types import SimpleNamespace
+        native_stat = Path.stat
+        attempted = []
+        def different_restore_group(path, *args, **kwargs):
+            value = native_stat(path, *args, **kwargs)
+            if path.name.startswith('gaozhengli-preferences-restore-'):
+                return SimpleNamespace(st_gid=value.st_gid + 1)
+            return value
+        def denied(path, uid, gid):
+            self.assertTrue(Path(path).name.startswith('gaozhengli-preferences-restore-'))
+            self.assertEqual(uid, -1)
+            attempted.append((str(path), uid, gid))
+            raise PermissionError('fixture restore-directory group adjustment denied')
+        before = installer.state_snapshot()
+        with mock.patch.object(Path, 'stat', different_restore_group):
+            with mock.patch.object(installer.os, 'chown', denied):
+                with self.assertRaisesRegex(PermissionError, 'group adjustment denied'):
+                    installer.install(self.source)
+        self.assertEqual(len(attempted), 1)
+        self.assert_old_target()
+        self.assertEqual(installer.state_snapshot(), before)
+        self.assertEqual(self.receipt()[1]['status'], 'failed-before-replacement')
+        self.assertTrue(self.receipt()[1]['oldProgramUnchanged'])
+        self.assertFalse(any(args[0] == installer.LS for args in self.commands))
+
 
     def test_source_requires_private_nonlinked_noindex(self):
         installer.private_staging_source(self.source)

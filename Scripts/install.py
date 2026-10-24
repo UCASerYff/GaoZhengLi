@@ -348,6 +348,12 @@ def backup_preferences(source, target, expected, identity):
         raise RuntimeError('Preferences backup changed while recording its metadata')
     verify_source()
     with tempfile.TemporaryDirectory(prefix='gaozhengli-preferences-restore-', suffix='.noindex', dir='/private/tmp') as folder:
+        # Darwin copies inherit the destination directory's group. Adjust only this
+        # newly created private rehearsal directory; never alter either preferences file.
+        if P(folder).stat().st_gid != copied['gid']:
+            os.chown(folder, -1, copied['gid'])
+            if P(folder).stat().st_gid != copied['gid']:
+                raise RuntimeError('Preferences restore directory group could not be preserved')
         restored = P(folder) / 'Preferences.plist'
         run('/usr/bin/ditto', '--rsrc', '--extattr', str(target), str(restored))
         restored_entry = preferences_entry(restored)

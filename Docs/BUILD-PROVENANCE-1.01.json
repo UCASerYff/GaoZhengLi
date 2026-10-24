@@ -53,5 +53,5 @@
   "scope": "Ordinary-file reference fractional mtime only; global envelope dates, TTL and consumer guards unchanged. Build/installer changes prevent duplicate expanded install entries and preserve verified rollback.",
   "rollbackReceiptFixCommit": "49b734177d229ceebe45dc1fd172442e169f21f0",
   "installerSource": "Scripts/install.py in this source archive; the Release target identifies the final source commit.",
-  "installerSHA256": "11b1e4c51e1c41c7a1f48ed159e82ab5b113b44dc4e447747d3da9175bd047be"
+  "installerSHA256": "4267c8342e7cd76fcb834fd8f09b80cb31e90bb46b212324ec86920b7caf6de4"
 }
